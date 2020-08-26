@@ -22,12 +22,12 @@ FuncType = type function (
         Documentation.LongDescription = "Created to get data from Criteo service",
         Documentation.Examples = {
         [
-            Description = "Returns a list of records from your Criteo table",
+            Description = "Returns table from Criteo",
             Code = "Criteo.Data(""2020-02-20"",""yesterday"")",
             Result = "Table from Criteo by days and campaigns."
         ],
         [
-            Description = "Returns a list of records from your Criteo table",
+            Description = "Returns table from Criteo",
             Code = "Criteo.Data(""69daysAgo"",""today"")",
             Result = "Table from Criteo by days and campaigns."
         ]
