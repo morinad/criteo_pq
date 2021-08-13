@@ -15,7 +15,12 @@ FuncType = type function (
         Documentation.FieldCaption = "End date:",
         Documentation.FieldDescription = "Enter the last date of your statistics. You can specify date in YYYY-MM-DD format or use dynamic formats: today, yesterday, 69daysAgo.",
         Documentation.SampleValues = {"yesterday"}
+    ]),
+    advertiserId as (type nullable text meta [
+        Documentation.FieldCaption = "ID клиента:",
+        Documentation.SampleValues = {"12345"}
     ])
+
     )
     as table meta [
         Documentation.Name = "Criteo.Data Function",
@@ -36,21 +41,32 @@ FuncType = type function (
 
 
 
-Criteo.Func =( start as text, end as text)=>
+Criteo.Func =(start as text, end as text, advertiserId as nullable text)=>
 let
-data = Text.ToBinary("reportType=CampaignPerformance&startDate="&dateFunc(start)&"&endDate="&dateFunc(end)&"&dimensions=Day&dimensions=CampaignId&metrics=Displays&metrics=Clicks&metrics=AdvertiserCost&metrics=SalesPc&format=Csv&currency=RUB&timezone=GMT"),
-headers = [#"Content-Type"="application/x-www-form-urlencoded", #"Accept"="application/octet-stream", #"Authorization"="Bearer "&tokenFunc(Extension.CurrentCredential()[Username],Extension.CurrentCredential()[Password])],
-web = Web.Contents("https://api.criteo.com/", [RelativePath = "marketing/v1/statistics", Content = data, Headers = headers, ManualStatusHandling = {404, 400}]),
+data=if advertiserId <> null then 
+"{'advertiserIds': '" & advertiserId &"', 'startDate': '" &dateFunc(start)& "', 'endDate': '"& dateFunc(end) &"', 'dimensions': ['Day','CampaignId'], 'metrics': ['Displays','AdvertiserCost','Clicks'], 'format': 'csv', 'currency': 'RUB', 'timezone': 'GMT'}" else 
+"{'startDate': '" &dateFunc(start)& "', 'endDate': '"& dateFunc(end) &"', 'dimensions': ['Day','CampaignId'], 'metrics': ['Displays','AdvertiserCost','Clicks'], 'format': 'csv', 'currency': 'RUB', 'timezone': 'GMT'}" ,
+
+headers = [#"Content-Type"="application/json", #"Accept"="application/octet-stream",  #"Authorization"="Bearer "&tokenFunc(Extension.CurrentCredential()[Username],Extension.CurrentCredential()[Password])],
+web = Web.Contents("https://api.criteo.com/2021-07/statistics/report", [ Content = Text.ToBinary(data), Headers = headers, ManualStatusHandling = {404,415, 400}]),
 result = Csv.Document(web, null, ";"),
     #"Повышенные заголовки" = Table.PromoteHeaders(result, [PromoteAllScalars=true]),
-#"Извлеченный текст после разделителя" = Table.TransformColumns(#"Повышенные заголовки", {{"Day", each Text.AfterDelimiter(_, " "), type text}}),
-    #"Разделить столбец по разделителю" = Table.SplitColumn(#"Извлеченный текст после разделителя", "Day", Splitter.SplitTextByDelimiter("/", QuoteStyle.Csv), {"Day.1", "Day.2", "Day.3"}),
-    #"Добавлен пользовательский объект" = Table.AddColumn(#"Разделить столбец по разделителю", "Date", each [Day.3]&"-"&[Day.1]&"-"&[Day.2]),
-    #"Удаленные столбцы" = Table.RemoveColumns(#"Добавлен пользовательский объект",{"Day.1", "Day.2", "Day.3"}),
-    #"Измененный тип" = Table.TransformColumnTypes( #"Удаленные столбцы" ,{{"Date", type date}, {"Impressions", Int64.Type}, {"Clicks", Int64.Type}, {"Sales", Int64.Type}}),
-    #"Измененный тип с языком" = Table.TransformColumnTypes(#"Измененный тип", {{"Cost", type number}}, "en-AU")
+    #"Измененный тип" = Table.TransformColumnTypes(   #"Повышенные заголовки"  ,{{"Day", type date}, {"Displays", Int64.Type}, {"Clicks", Int64.Type}}),
+    lang = Table.TransformColumnTypes(#"Измененный тип", {{"AdvertiserCost", type number}}, "en-AU"),
+
+ ren1 = try Table.RenameColumns(lang ,{{"Day", "Дата"}}) otherwise lang ,
+    ren2 = try Table.RenameColumns(ren1 ,{{"AdvertiserCost", "Расход"}}) otherwise ren1 ,
+    ren3 = try Table.RenameColumns(ren2 ,{{"Clicks", "Клики"}}) otherwise ren2 ,
+    ren4 = try Table.RenameColumns(ren3 ,{{"Displays", "Показы"}}) otherwise ren3 ,
+    ren5 = try Table.RenameColumns(ren4 ,{{"Currency", "Валюта"}}) otherwise ren4 ,
+    ren6 = try Table.RenameColumns(ren5 ,{{"Campaign", "Кампания"}}) otherwise ren5, 
+    ren7 = try Table.RenameColumns(ren6 ,{{"CampaignId", "ID кампании"}}) otherwise ren6 ,
+    ren8 = try Table.RenameColumns(ren7 ,{{"CampaignType", "Тип кампании"}}) otherwise ren7 ,
+    ren9 = try Table.RenameColumns(ren8 ,{{"Sales", "Продажи"}}) otherwise ren8,
+    ren10 = try Table.RenameColumns(ren9 ,{{"Advertiser Name", "Клиент"}}) otherwise ren9 
+
 in
-    #"Измененный тип с языком";
+   ren10 ;
 
 
 
@@ -65,7 +81,7 @@ tokenFunc=(log, pass)=>
 let
 data = Text.ToBinary("client_id="&log&"&client_secret="&pass&"&grant_type=client_credentials"),
 headers = [#"Content-Type"="application/x-www-form-urlencoded", #"Accept"="application/json"],
-web = Web.Contents("https://api.criteo.com/", [RelativePath = "marketing/oauth2/token", Content = data, Headers = headers, ManualStatusHandling = {404, 400}]),
+web = Web.Contents("https://api.criteo.com/oauth2/token", [ Content = data, Headers = headers, ManualStatusHandling = {404, 400}]),
 result = Json.Document(web)[access_token]
 in result;
 
@@ -73,7 +89,7 @@ in result;
 
 
 Criteo = [
-    TestConnection = (dataSourcePath) => { "Criteo.Data", Json.Document(dataSourcePath)[start],Json.Document(dataSourcePath)[end]},
+    TestConnection = (dataSourcePath) => { "Criteo.Data", Json.Document(dataSourcePath)[start],Json.Document(dataSourcePath)[end],Json.Document(dataSourcePath)[advertiserId]?},
     Authentication = [
         
          UsernamePassword  = []
